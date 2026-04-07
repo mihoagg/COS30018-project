@@ -1,0 +1,7 @@
+1. Preprocess the image
+
+Prepare the input so digits are easier to detect:
+
+Convert to grayscale
+Threshold (black & white)
+Remove noise
