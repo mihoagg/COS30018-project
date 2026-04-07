@@ -3,5 +3,6 @@
 Prepare the input so digits are easier to detect:
 
 Convert to grayscale
-Threshold (black & white)
-Remove noise
+resize to fit mnist
+
+Remove noise (maybe not for mnist data)
