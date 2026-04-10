@@ -1,45 +1,32 @@
-import tensorflow as tf
-from tensorflow.keras import layers, models
 import matplotlib.pyplot as plt
-from image_processing.cnn_preprocessing import cnn_preprocessing
 
-# Load MNIST dataset
-(x_train, y_train), (x_test, y_test) = tf.keras.datasets.mnist.load_data()
+from src.data.mnist import load_mnist
+from src.image_processing.cnn_preprocessing import cnn_preprocessing
+from src.image_processing.normalize_mnist import normalize
+from src.model.cnn import build_cnn_model
 
-# Normalize
-x_train, x_test = x_train / 255.0, x_test / 255.0
 
-# Add channel dimension (important for CNN)
-x_train, x_test = cnn_preprocessing(x_train, x_test)
+def main():
+    (x_train, y_train), (x_test, y_test) = load_mnist()
 
-# Show an example image
-plt.imshow(x_train[0].squeeze(), cmap='gray')
-plt.title(f"Label: {y_train[0]}")
-plt.show()
+    x_train, x_test = normalize(x_train, x_test)
+    x_train, x_test = cnn_preprocessing(x_train, x_test)
 
-# Build CNN model
-model = models.Sequential([
-    layers.Conv2D(32, (3, 3), activation='relu', input_shape=(28, 28, 1)),
-    layers.MaxPooling2D((2, 2)),
+    plt.imshow(x_train[0].squeeze(), cmap="gray")
+    plt.title(f"Label: {y_train[0]}")
+    plt.show()
 
-    layers.Conv2D(64, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
+    model = build_cnn_model()
+    model.compile(
+        optimizer="adam",
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"],
+    )
 
-    layers.Flatten(),
-    layers.Dense(128, activation='relu'),
-    layers.Dense(10, activation='softmax')
-])
+    model.fit(x_train, y_train, epochs=5)
+    test_loss, test_acc = model.evaluate(x_test, y_test)
+    print("Test accuracy:", test_acc)
 
-# Compile
-model.compile(
-    optimizer='adam',
-    loss='sparse_categorical_crossentropy',
-    metrics=['accuracy']
-)
 
-# Train
-model.fit(x_train, y_train, epochs=5)
-
-# Evaluate
-test_loss, test_acc = model.evaluate(x_test, y_test)
-print("Test accuracy:", test_acc)
+if __name__ == "__main__":
+    main()
