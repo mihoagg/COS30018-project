@@ -41,8 +41,8 @@ def create_combined_image(images, labels, num_digits=5):
 # Generate example
 combined_img, label_str = create_combined_image(images, labels, num_digits=6)
 
-os.makedirs("/src/data/combined", exist_ok=True)
-save_image(combined_img, f"/src/data/combined/mnist_{label_str}.png")
+os.makedirs("src/data/combined", exist_ok=True)
+save_image(combined_img, f"src/data/combined/mnist_{label_str}.png")
 
 print("Label:", label_str)
 
