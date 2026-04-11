@@ -25,29 +25,51 @@ def to_grayscale(image):
 
 
 def invert_if_needed(image):
-    """Inverts the image if the background is light (ensures white digits on black bg)."""
-    if np.mean(image) > 127:
-        return 255 - image
-    return image
+    """
+    Determines if Otsu's thresholding produced inverted results and corrects it.
+    """
+    img = to_grayscale(image)
+    
+    # Apply Otsu
+    _, binary = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # Count white pixels along image borders (assuming object is centered)
+    h, w = binary.shape
+    border_pixels = np.concatenate([
+        binary[0, :],      # top edge
+        binary[-1, :],     # bottom edge
+        binary[:, 0],      # left edge
+        binary[:, -1]      # right edge
+    ])
+    
+    # If borders are mostly white (>50%), the background is white, so invert
+    if np.mean(border_pixels) > 127:
+        binary = cv2.bitwise_not(binary)
+        # Also invert the original image for consistency
+        img = cv2.bitwise_not(img)
+    
+    # Clean up: set background to pure black
+    img[binary == 0] = 0
+    
+    return img
 
 
 def threshold_image(image):
     """Creates a binary image for segmentation using Otsu's method, blurring, and morphology."""
+    # Step 1: turn image to grayscale
     gray = to_grayscale(image)
+    # Step 2: Invert if background is white, ensures Otsu thresholding works
     gray = invert_if_needed(gray)
-    
-    # Step 1: Denoise with Gaussian Blur
+    # Step 3: Denoise with Gaussian Blur
     denoised = cv2.GaussianBlur(gray, (5, 5), 0)
-        
-    # Step 2: Otsu's Thresholding
+    # Step 4: Otsu's Thresholding
     _, binary = cv2.threshold(
         denoised,
         0,
         255,
         cv2.THRESH_BINARY + cv2.THRESH_OTSU,
     )
-
-    # Step 3: Morphological Closing to fill small gaps (Old process used 3x3)
+    # Step 5: Morphological Closing to fill small gaps
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
 
