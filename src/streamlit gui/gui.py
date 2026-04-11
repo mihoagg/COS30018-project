@@ -27,10 +27,14 @@ st.caption("Train model, upload digit image, inspect prediction confidence.")
 
 
 def get_model_type_label(model_type):
-    return "CNN" if model_type == "cnn" else "MLP"
+    labels = {"cnn": "CNN", "mlp": "MLP", "svm": "SVM"}
+    return labels.get(model_type, model_type.upper())
 
 
 def show_history(history):
+    if history is None:
+        st.info("No training history available for this model type (e.g., SVM).")
+        return
     history_data = history.history
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
 
@@ -118,23 +122,66 @@ with st.sidebar:
     st.header("Training Controls")
     model_type = st.selectbox(
         "Model Type",
-        options=["cnn", "mlp"],
+        options=["cnn", "mlp", "svm"],
         format_func=get_model_type_label,
     )
-    epochs = st.slider("Epochs", min_value=1, max_value=15, value=5)
-    batch_size = st.select_slider("Batch Size", options=[16, 32, 64, 128], value=32)
-    optimizer = st.selectbox("Optimizer", options=["adam", "sgd", "rmsprop"], index=0)
-    model_save_path = st.text_input("Save Model Path", value="trained_models/digit_model.keras")
-    model_load_path = st.text_input("Load Model Path", value="trained_models/digit_model.keras")
+    
+    model_params = {}
+    epochs = 5
+    batch_size = 32
+    optimizer = "adam"
+    test_size = 0.1
+
+    if model_type in ["cnn", "mlp"]:
+        epochs = st.slider("Epochs", min_value=1, max_value=15, value=5)
+        batch_size = st.select_slider("Batch Size", options=[16, 32, 64, 128], value=32)
+        optimizer = st.selectbox("Optimizer", options=["adam", "sgd", "rmsprop"], index=0)
+        
+        st.subheader("Architecture")
+        dense_units = st.slider("Dense Units", min_value=32, max_value=256, value=128, step=32)
+        if model_type == "cnn":
+            conv1_filters = st.slider("Conv Layer 1 Filters", min_value=16, max_value=64, value=32, step=16)
+            conv2_filters = st.slider("Conv Layer 2 Filters", min_value=32, max_value=128, value=64, step=32)
+            model_params = {
+                "conv1_filters": conv1_filters,
+                "conv2_filters": conv2_filters,
+                "dense_units": dense_units,
+            }
+        else:
+            model_params = {"dense_units": dense_units}
+    elif model_type == "svm":
+        test_size = st.slider(
+            "Training Set Size Fraction",
+            min_value=0.01,
+            max_value=1.0,
+            value=0.1,
+            help="Fraction of training data to use for SVM (it is slow on full dataset).",
+        )
+        svm_c = st.number_input("C (Regularization)", value=1.0, step=0.1)
+        svm_kernel = st.selectbox("Kernel", options=["rbf", "linear", "poly", "sigmoid"], index=0)
+        svm_gamma = st.selectbox("Gamma", options=["scale", "auto"], index=0)
+        model_params = {"C": svm_c, "kernel": svm_kernel, "gamma": svm_gamma}
+
+    default_ext = ".joblib" if model_type == "svm" else ".keras"
+    model_save_path = st.text_input(
+        "Save Model Path", 
+        value=f"trained_models/{model_type}_digit_model{default_ext}"
+    )
+    model_load_path = st.text_input(
+        "Load Model Path", 
+        value=f"trained_models/{model_type}_digit_model{default_ext}"
+    )
 
     if st.button("Train Model", use_container_width=True):
         with st.spinner("Training model..."):
-            model, _, test_loss, test_acc, history = train_model(
+            model, _, test_loss, test_acc, history, duration = train_model(
                 model_type=model_type,
                 epochs=epochs,
                 optimizer=optimizer,
                 batch_size=batch_size,
                 verbose=0,
+                test_size=test_size,
+                **model_params
             )
 
         st.session_state["model"] = model
@@ -146,6 +193,7 @@ with st.sidebar:
             "epochs": epochs,
             "batch_size": batch_size,
             "optimizer": optimizer,
+            "training_duration": float(duration),
         }
         st.success("Training complete.")
 
@@ -178,10 +226,11 @@ with left_col:
         st.write(f"Current model: `{get_model_type_label(st.session_state['model_type'])}`")
         metrics = st.session_state["metrics"]
         if metrics:
-            metric_col1, metric_col2, metric_col3 = st.columns(3)
+            metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
             metric_col1.metric("Test Accuracy", f"{metrics['test_accuracy']:.4f}")
             metric_col2.metric("Test Loss", f"{metrics['test_loss']:.4f}")
             metric_col3.metric("Batch Size", metrics["batch_size"])
+            metric_col4.metric("Training Time", f"{metrics['training_duration']:.2f}s")
             st.write(
                 f"Optimizer: `{metrics['optimizer']}` | Epochs: `{metrics['epochs']}`"
             )

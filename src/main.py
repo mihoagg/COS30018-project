@@ -1,3 +1,5 @@
+import time
+import joblib
 from pathlib import Path
 
 import cv2
@@ -10,6 +12,10 @@ from image_segmentation.segmentation import segment_digits
 from data.mnist import load_mnist
 from model.cnn import build_cnn_model
 from model.multi_layer_perceptron import build_mlp_model
+from model.svm import build_svm_model
+
+
+from sklearn.model_selection import train_test_split
 
 
 def data_loader(source="mnist"):
@@ -18,7 +24,7 @@ def data_loader(source="mnist"):
     raise ValueError("source must be 'mnist'")
 
 
-def prepare_data_and_model(model_type):
+def prepare_data_and_model(model_type, **model_params):
     (x_train, y_train), (x_test, y_test) = data_loader("mnist")
 
     # Normalize training data
@@ -29,13 +35,16 @@ def prepare_data_and_model(model_type):
         # Add channel dimension for CNN
         x_train = x_train[..., np.newaxis]
         x_test = x_test[..., np.newaxis]
-        model = build_cnn_model()
+        model = build_cnn_model(**model_params)
         display_image = x_train[0].squeeze()
     elif model_type == "mlp":
-        model = build_mlp_model()
+        model = build_mlp_model(**model_params)
+        display_image = x_train[0]
+    elif model_type == "svm":
+        model = build_svm_model(**model_params)
         display_image = x_train[0]
     else:
-        raise ValueError("model_type must be 'mlp' or 'cnn'")
+        raise ValueError("model_type must be 'mlp', 'cnn' or 'svm'")
 
     return (x_train, y_train), (x_test, y_test), model, display_image
 
@@ -49,32 +58,77 @@ def compile_model(model, optimizer="adam"):
     return model
 
 
-def train_model(model_type="cnn", epochs=5, optimizer="adam", batch_size=32, verbose=1):
+def train_model(
+    model_type="cnn",
+    epochs=5,
+    optimizer="adam",
+    batch_size=32,
+    verbose=1,
+    test_size=0.1,
+    **model_params,
+):
     (x_train, y_train), (x_test, y_test), model, display_image = prepare_data_and_model(
-        model_type
+        model_type, **model_params
     )
-    compile_model(model, optimizer=optimizer)
-    history = model.fit(
-        x_train,
-        y_train,
-        epochs=epochs,
-        batch_size=batch_size,
-        validation_data=(x_test, y_test),
-        verbose=verbose,
-    )
-    test_loss, test_acc = model.evaluate(x_test, y_test, verbose=verbose)
-    return model, display_image, test_loss, test_acc, history
+
+    start_time = time.time()
+    if model_type == "svm":
+        # SVM is very slow on full MNIST. Use a subset if test_size is provided.
+        # We split the training data to get a smaller training set.
+        # test_size here actually defines how much of the original x_train to keep for TRAINING.
+        # If test_size=0.1, we keep 10% of x_train for training and discard the rest.
+        # This is a common practice for SVM on MNIST in educational projects.
+        if test_size < 1.0:
+            x_train, _, y_train, _ = train_test_split(
+                x_train, y_train, train_size=test_size, stratify=y_train, random_state=42
+            )
+
+        # Flatten data for SVM: (n_samples, 28, 28) -> (n_samples, 784)
+        x_train_flat = x_train.reshape(x_train.shape[0], -1)
+        x_test_flat = x_test.reshape(x_test.shape[0], -1)
+
+        if verbose:
+            print(f"Training SVM model with {len(x_train)} samples...")
+        model.fit(x_train_flat, y_train)
+
+        test_acc = model.score(x_test_flat, y_test)
+        test_loss = 0.0  # SVM doesn't provide a direct equivalent to Keras loss here
+        history = None
+    else:
+        compile_model(model, optimizer=optimizer)
+        history = model.fit(
+            x_train,
+            y_train,
+            epochs=epochs,
+            batch_size=batch_size,
+            validation_data=(x_test, y_test),
+            verbose=verbose,
+        )
+        test_loss, test_acc = model.evaluate(x_test, y_test, verbose=verbose)
+    
+    end_time = time.time()
+    training_duration = end_time - start_time
+        
+    return model, display_image, test_loss, test_acc, history, training_duration
 
 
 def save_model(model, output_path):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    model.save(output_path)
+    
+    if hasattr(model, "save"):
+        model.save(output_path)
+    else:
+        joblib.dump(model, output_path)
+        
     return output_path
 
 
 def load_trained_model(model_path):
-    return keras.models.load_model(model_path)
+    model_path = Path(model_path)
+    if model_path.suffix == ".keras":
+        return keras.models.load_model(model_path)
+    return joblib.load(model_path)
 
 
 def _prepare_model_batch(images, model_type="cnn"):
@@ -87,7 +141,10 @@ def _prepare_model_batch(images, model_type="cnn"):
     if model_type == "mlp":
         return batch
 
-    raise ValueError("model_type must be 'mlp' or 'cnn'")
+    if model_type == "svm":
+        return batch.reshape(batch.shape[0], -1)
+
+    raise ValueError("model_type must be 'mlp', 'cnn' or 'svm'")
 
 
 def preprocess_image_array(image_array, model_type="cnn"):
@@ -126,7 +183,12 @@ def predict_image(model, image_path, model_type="cnn"):
     image_batch, preview_image, is_multi_digit = preprocess_image(
         image_path, model_type
     )
-    prediction = model.predict(image_batch, verbose=0)
+    
+    if model_type == "svm":
+        prediction = model.predict_proba(image_batch)
+    else:
+        prediction = model.predict(image_batch, verbose=0)
+        
     predicted_labels = np.argmax(prediction, axis=1).astype(int).tolist()
     confidences = np.max(prediction, axis=1).astype(float).tolist()
 
@@ -141,7 +203,12 @@ def predict_image_array(model, image_array, model_type="cnn"):
     image_batch, preview_image, is_multi_digit = preprocess_image_array(
         image_array, model_type
     )
-    prediction = model.predict(image_batch, verbose=0)
+    
+    if model_type == "svm":
+        prediction = model.predict_proba(image_batch)
+    else:
+        prediction = model.predict(image_batch, verbose=0)
+        
     predicted_labels = np.argmax(prediction, axis=1).astype(int).tolist()
     confidences = np.max(prediction, axis=1).astype(float).tolist()
 
