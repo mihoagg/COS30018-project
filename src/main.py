@@ -74,13 +74,21 @@ def load_trained_model(model_path):
 
 
 def preprocess_image_array(image_array, model_type="cnn"):
-    resized_image = cv2.resize(image_array, (28, 28))
-    normalized_image = resized_image.astype("float32") / 255.0
+    # Resize
+    resized = cv2.resize(image_array, (28, 28)).astype("float32")
+
+    # Normalize (shared pipeline)
+    normalized, _ = normalize(resized, resized)
+
+    preview_image = normalized
 
     if model_type == "cnn":
-        return normalized_image.reshape(1, 28, 28, 1), normalized_image
+        processed, _ = cnn_preprocessing(normalized, normalized)
+        return processed.reshape(1, 28, 28, 1), preview_image
+
     if model_type == "mlp":
-        return normalized_image.reshape(1, 28, 28), normalized_image
+        return normalized.reshape(1, 28, 28), preview_image
+
     raise ValueError("model_type must be 'mlp' or 'cnn'")
 
 
