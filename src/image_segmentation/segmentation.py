@@ -3,9 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import argparse
-from typing import Iterable
 
 import numpy as np
+
+from image_processing.segmentation_preprocessing import (
+    extract_digit_boxes,
+    prepare_for_segmentation,
+    to_grayscale,
+)
 
 try:
     import cv2
@@ -70,37 +75,16 @@ def to_grayscale(image: np.ndarray) -> np.ndarray:
     )
 
 
-def find_external_contours(gray_image: np.ndarray) -> list[np.ndarray]:
-    _require_cv2()
-
-    if gray_image.size == 0:
-        raise ValueError("Grayscale image array is empty.")
-
-    contour_source = gray_image
-    if gray_image.dtype != np.uint8:
-        contour_source = np.clip(gray_image, 0, 255).astype(np.uint8)
-
-    contours, _ = cv2.findContours(
-        contour_source.copy(),
-        cv2.RETR_EXTERNAL,
-        cv2.CHAIN_APPROX_SIMPLE,
-    )
-    return contours
-
-
 def extract_digit_segments(
     gray_image: np.ndarray,
-    contours: Iterable[np.ndarray],
     min_area: float = 50.0,
 ) -> list[Segment]:
+    binary_image = prepare_for_segmentation(gray_image)
+    boxes = extract_digit_boxes(binary_image, min_area=min_area)
     segments: list[Segment] = []
 
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area <= min_area:
-            continue
-
-        x, y, w, h = cv2.boundingRect(contour)
+    for box in boxes:
+        x, y, w, h = box.x, box.y, box.w, box.h
         digit = gray_image[y : y + h, x : x + w]
         if digit.size == 0:
             continue
@@ -118,8 +102,7 @@ def segment_digits(
 ) -> list[Segment]:
     source_image = load_image(image)
     gray_image = to_grayscale(source_image)
-    contours = find_external_contours(gray_image)
-    segments = extract_digit_segments(gray_image, contours, min_area=min_area)
+    segments = extract_digit_segments(gray_image, min_area=min_area)
 
     if require_segments and not segments:
         raise ValueError(

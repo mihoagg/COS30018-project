@@ -6,7 +6,14 @@ import numpy as np
 from tensorflow import keras
 
 from image_processing.cnn_preprocessing import cnn_preprocessing
+from image_processing.mnist_normalization import normalize_segmented
 from image_processing.normalize_mnist import normalize
+from image_processing.segmentation_preprocessing import (
+    crop_digit_regions,
+    extract_digit_boxes,
+    prepare_for_segmentation,
+    to_grayscale,
+)
 from data.mnist import load_mnist
 from model.cnn import build_cnn_model
 from model.multi_layer_perceptron import build_mlp_model
@@ -73,23 +80,40 @@ def load_trained_model(model_path):
     return keras.models.load_model(model_path)
 
 
-def preprocess_image_array(image_array, model_type="cnn"):
-    # Resize
-    resized = cv2.resize(image_array, (28, 28)).astype("float32")
-
-    # Normalize (shared pipeline)
-    normalized, _ = normalize(resized, resized)
-
-    preview_image = normalized
+def _prepare_model_batch(images, model_type="cnn"):
+    batch = np.stack(images, axis=0).astype("float32")
 
     if model_type == "cnn":
-        processed, _ = cnn_preprocessing(normalized, normalized)
-        return processed.reshape(1, 28, 28, 1), preview_image
+        return batch[..., np.newaxis]
 
     if model_type == "mlp":
-        return normalized.reshape(1, 28, 28), preview_image
+        return batch
 
     raise ValueError("model_type must be 'mlp' or 'cnn'")
+
+
+def _preprocess_full_image(image_array):
+    gray_image = to_grayscale(np.asarray(image_array))
+    resized = cv2.resize(gray_image, (28, 28)).astype("float32")
+    normalized, _ = normalize(resized, resized)
+    return normalized
+
+
+def preprocess_image_array(image_array, model_type="cnn"):
+    gray_image = to_grayscale(np.asarray(image_array))
+    binary_image = prepare_for_segmentation(gray_image)
+    digit_boxes = extract_digit_boxes(binary_image)
+
+    if digit_boxes:
+        grayscale_crops = crop_digit_regions(gray_image, digit_boxes)
+        preview_images = [normalize_segmented(crop) for crop in grayscale_crops]
+    else:
+        preview_images = [_preprocess_full_image(gray_image)]
+
+    image_batch = _prepare_model_batch(preview_images, model_type=model_type)
+    is_multi_digit = len(preview_images) > 1
+    preview_output = preview_images if is_multi_digit else preview_images[0]
+    return image_batch, preview_output, is_multi_digit
 
 
 def preprocess_image(image_path, model_type="cnn"):
@@ -100,19 +124,33 @@ def preprocess_image(image_path, model_type="cnn"):
 
 
 def predict_image(model, image_path, model_type="cnn"):
-    image_batch, preview_image = preprocess_image(image_path, model_type)
+    image_batch, preview_image, is_multi_digit = preprocess_image(
+        image_path, model_type
+    )
     prediction = model.predict(image_batch, verbose=0)
-    predicted_label = int(np.argmax(prediction, axis=1)[0])
-    confidence = float(np.max(prediction, axis=1)[0])
-    return predicted_label, confidence, preview_image, prediction[0]
+    predicted_labels = np.argmax(prediction, axis=1).astype(int).tolist()
+    confidences = np.max(prediction, axis=1).astype(float).tolist()
+
+    if is_multi_digit:
+        combined_label = "".join(str(label) for label in predicted_labels)
+        return combined_label, confidences, preview_image, prediction
+
+    return predicted_labels[0], confidences[0], preview_image, prediction[0]
 
 
 def predict_image_array(model, image_array, model_type="cnn"):
-    image_batch, preview_image = preprocess_image_array(image_array, model_type)
+    image_batch, preview_image, is_multi_digit = preprocess_image_array(
+        image_array, model_type
+    )
     prediction = model.predict(image_batch, verbose=0)
-    predicted_label = int(np.argmax(prediction, axis=1)[0])
-    confidence = float(np.max(prediction, axis=1)[0])
-    return predicted_label, confidence, preview_image, prediction[0]
+    predicted_labels = np.argmax(prediction, axis=1).astype(int).tolist()
+    confidences = np.max(prediction, axis=1).astype(float).tolist()
+
+    if is_multi_digit:
+        combined_label = "".join(str(label) for label in predicted_labels)
+        return combined_label, confidences, preview_image, prediction
+
+    return predicted_labels[0], confidences[0], preview_image, prediction[0]
 
 
 def main(
@@ -146,10 +184,31 @@ def main(
             model, image_path, model_type=model_type
         )
         print(f"Prediction: {predicted_label}")
-        print(f"Confidence: {confidence:.4f}")
-        plt.imshow(preview_image, cmap="gray")
-        plt.title(f"Predicted: {predicted_label}")
-        plt.show()
+        if isinstance(confidence, list):
+            print(
+                "Per-digit confidence:",
+                ", ".join(f"{value:.4f}" for value in confidence),
+            )
+            figure, axes = plt.subplots(
+                1,
+                len(preview_image),
+                figsize=(3 * len(preview_image), 3),
+            )
+            axes = np.atleast_1d(axes)
+            for index, (axis, digit_image) in enumerate(
+                zip(axes, preview_image),
+                start=1,
+            ):
+                axis.imshow(digit_image, cmap="gray")
+                axis.set_title(f"Digit {index}")
+                axis.axis("off")
+            plt.tight_layout()
+            plt.show()
+        else:
+            print(f"Confidence: {confidence:.4f}")
+            plt.imshow(preview_image, cmap="gray")
+            plt.title(f"Predicted: {predicted_label}")
+            plt.show()
 
     return model
 

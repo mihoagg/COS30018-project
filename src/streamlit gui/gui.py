@@ -63,6 +63,46 @@ def show_probability_chart(probabilities):
     plt.close(fig)
 
 
+def show_uploaded_prediction(predicted_label, confidence, processed_image, probabilities):
+    preview_col, result_col = st.columns([1, 1.2])
+
+    with preview_col:
+        if isinstance(processed_image, list):
+            st.write("Processed Digits")
+            preview_columns = st.columns(len(processed_image))
+            for index, (column, digit_image) in enumerate(
+                zip(preview_columns, processed_image),
+                start=1,
+            ):
+                column.image(
+                    digit_image,
+                    caption=f"Digit {index}",
+                    use_container_width=True,
+                    clamp=True,
+                )
+        else:
+            st.image(
+                processed_image,
+                caption="Processed 28x28 Input",
+                width=220,
+                clamp=True,
+            )
+
+    with result_col:
+        st.write(f"Predicted Label: `{predicted_label}`")
+        if isinstance(confidence, list):
+            st.write(
+                "Per-digit confidence: "
+                + ", ".join(f"`{value:.4f}`" for value in confidence)
+            )
+            for index, digit_probabilities in enumerate(probabilities, start=1):
+                st.caption(f"Digit {index} probabilities")
+                show_probability_chart(digit_probabilities)
+        else:
+            st.write(f"Confidence: `{confidence:.4f}`")
+            show_probability_chart(probabilities)
+
+
 def ensure_state():
     st.session_state.setdefault("model", None)
     st.session_state.setdefault("model_type", "cnn")
@@ -194,16 +234,9 @@ if uploaded_file is not None:
             uploaded_array,
             model_type=st.session_state["model_type"],
         )
-
-        preview_col, result_col = st.columns([1, 1.2])
-        with preview_col:
-            st.image(
-                processed_image,
-                caption="Processed 28x28 Input",
-                width=220,
-                clamp=True,
-            )
-        with result_col:
-            st.write(f"Predicted Label: `{predicted_label}`")
-            st.write(f"Confidence: `{confidence:.4f}`")
-            show_probability_chart(probabilities)
+        show_uploaded_prediction(
+            predicted_label,
+            confidence,
+            processed_image,
+            probabilities,
+        )
