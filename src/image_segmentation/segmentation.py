@@ -86,6 +86,7 @@ def segment_digits(
         y1 = min(image_height, box.y + box.h + padding)
 
         digit_crop = gray_image[y0:y1, x0:x1].copy()
+
         if digit_crop.size == 0:
             continue
 

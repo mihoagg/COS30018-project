@@ -93,15 +93,17 @@ def _prepare_model_batch(images, model_type="cnn"):
 def preprocess_image_array(image_array, model_type="cnn"):
     """Full preprocessing pipeline: grayscale, segmentation, resize, normalize."""
     gray_image = processor.to_grayscale(np.asarray(image_array))
+    gray_image = processor.invert_if_needed(gray_image)
     segments = segment_digits(gray_image)
 
     if not segments:
-        # If no digits found, treat the whole image as a single digit
-        processed_images = [processor.normalize(processor.resize_image(gray_image))]
+        # If no digits found, treat the whole image as a single digit, cleaning the background
+        cleaned_image = processor.clean_background(gray_image)
+        processed_images = [processor.normalize(processor.resize_to_mnist(cleaned_image))]
     else:
         # Process each detected digit segment
         processed_images = [
-            processor.normalize(processor.resize_image(segment.image))
+            processor.normalize(processor.resize_to_mnist(processor.clean_background(segment.image)))
             for segment in segments
         ]
 

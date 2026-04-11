@@ -222,7 +222,16 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     uploaded_image = Image.open(uploaded_file).convert("L")
     uploaded_array = np.array(uploaded_image)
-    st.image(uploaded_array, caption="Uploaded Image", width=220, clamp=True)
+    
+    # Display columns for original and thresholded view
+    input_col, threshold_col = st.columns(2)
+    with input_col:
+        st.image(uploaded_array, caption="Uploaded Image (Grayscale)", width=220, clamp=True)
+    
+    with threshold_col:
+        from image_processing.processor import threshold_image
+        binary_view = threshold_image(uploaded_array)
+        st.image(binary_view, caption="Segmentation Mask (Binary)", width=220, clamp=True)
 
     if st.session_state["model"] is None:
         st.warning("Train or load model first.")
