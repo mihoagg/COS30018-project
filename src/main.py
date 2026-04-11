@@ -5,15 +5,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from tensorflow import keras
 
-from image_processing.cnn_preprocessing import cnn_preprocessing
-from image_processing.mnist_normalization import normalize_segmented
-from image_processing.normalize_mnist import normalize
-from image_processing.segmentation_preprocessing import (
-    crop_digit_regions,
-    extract_digit_boxes,
-    prepare_for_segmentation,
-    to_grayscale,
-)
+from image_processing import processor
+from image_segmentation.segmentation import segment_digits
 from data.mnist import load_mnist
 from model.cnn import build_cnn_model
 from model.multi_layer_perceptron import build_mlp_model
@@ -28,10 +21,14 @@ def data_loader(source="mnist"):
 def prepare_data_and_model(model_type):
     (x_train, y_train), (x_test, y_test) = data_loader("mnist")
 
-    x_train, x_test = normalize(x_train, x_test)
+    # Normalize training data
+    x_train = processor.normalize(x_train)
+    x_test = processor.normalize(x_test)
 
     if model_type == "cnn":
-        x_train, x_test = cnn_preprocessing(x_train, x_test)
+        # Add channel dimension for CNN
+        x_train = x_train[..., np.newaxis]
+        x_test = x_test[..., np.newaxis]
         model = build_cnn_model()
         display_image = x_train[0].squeeze()
     elif model_type == "mlp":
@@ -81,6 +78,7 @@ def load_trained_model(model_path):
 
 
 def _prepare_model_batch(images, model_type="cnn"):
+    """Prepares a batch of processed images for model input."""
     batch = np.stack(images, axis=0).astype("float32")
 
     if model_type == "cnn":
@@ -92,32 +90,32 @@ def _prepare_model_batch(images, model_type="cnn"):
     raise ValueError("model_type must be 'mlp' or 'cnn'")
 
 
-def _preprocess_full_image(image_array):
-    gray_image = to_grayscale(np.asarray(image_array))
-    resized = cv2.resize(gray_image, (28, 28)).astype("float32")
-    normalized, _ = normalize(resized, resized)
-    return normalized
-
-
 def preprocess_image_array(image_array, model_type="cnn"):
-    gray_image = to_grayscale(np.asarray(image_array))
-    binary_image = prepare_for_segmentation(gray_image)
-    digit_boxes = extract_digit_boxes(binary_image)
+    """Full preprocessing pipeline: grayscale, segmentation, resize, normalize."""
+    gray_image = processor.to_grayscale(np.asarray(image_array))
+    segments = segment_digits(gray_image)
 
-    if digit_boxes:
-        grayscale_crops = crop_digit_regions(gray_image, digit_boxes)
-        preview_images = [normalize_segmented(crop) for crop in grayscale_crops]
+    if not segments:
+        # If no digits found, treat the whole image as a single digit
+        processed_images = [processor.normalize(processor.resize_image(gray_image))]
     else:
-        preview_images = [_preprocess_full_image(gray_image)]
+        # Process each detected digit segment
+        processed_images = [
+            processor.normalize(processor.resize_image(segment.image))
+            for segment in segments
+        ]
 
-    image_batch = _prepare_model_batch(preview_images, model_type=model_type)
-    is_multi_digit = len(preview_images) > 1
-    preview_output = preview_images if is_multi_digit else preview_images[0]
+    image_batch = _prepare_model_batch(processed_images, model_type=model_type)
+    is_multi_digit = len(processed_images) > 1
+    
+    # Return processed images for preview (scaled back to 0-1 for display tools)
+    preview_output = processed_images if is_multi_digit else processed_images[0]
+    
     return image_batch, preview_output, is_multi_digit
 
 
 def preprocess_image(image_path, model_type="cnn"):
-    image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    image = cv2.imread(str(image_path))
     if image is None:
         raise FileNotFoundError(f"Could not open image: {image_path}")
     return preprocess_image_array(image, model_type=model_type)

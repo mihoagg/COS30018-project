@@ -113,8 +113,6 @@ def ensure_state():
 ensure_state()
 
 (x_train, y_train), (x_test, y_test) = load_mnist()
-x_train = x_train / 255.0
-x_test = x_test / 255.0
 
 with st.sidebar:
     st.header("Training Controls")
@@ -208,9 +206,9 @@ with right_col:
         else:
             predicted_label, confidence, _, probabilities = predict_image_array(
                 st.session_state["model"],
-                sample_image * 255.0,
+                sample_image,
                 model_type=st.session_state["model_type"],
-            )
+)
             st.write(f"Predicted Label: `{predicted_label}`")
             st.write(f"Confidence: `{confidence:.4f}`")
             show_probability_chart(probabilities)
