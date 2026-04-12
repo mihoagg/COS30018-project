@@ -10,22 +10,29 @@ from tensorflow import keras
 from image_processing import processor
 from image_segmentation.segmentation import segment_digits
 from data.mnist import load_mnist
+from data.emnist import load_emnist, get_label_mapping
 from model.cnn import build_cnn_model
 from model.multi_layer_perceptron import build_mlp_model
 from model.svm import build_svm_model
 
 
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
 
 
 def data_loader(source="mnist"):
     if source == "mnist":
         return load_mnist()
-    raise ValueError("source must be 'mnist'")
+    if source == "emnist":
+        return load_emnist()
+    raise ValueError(f"source must be 'mnist' or 'emnist', got {source}")
 
 
-def prepare_data_and_model(model_type, **model_params):
-    (x_train, y_train), (x_test, y_test) = data_loader("mnist")
+def prepare_data_and_model(model_type, source="mnist", **model_params):
+    (x_train, y_train), (x_test, y_test) = data_loader(source)
+    
+    mapping = get_label_mapping(source)
+    num_classes = len(mapping)
 
     # Normalize training data
     x_train = processor.normalize(x_train)
@@ -35,10 +42,10 @@ def prepare_data_and_model(model_type, **model_params):
         # Add channel dimension for CNN
         x_train = x_train[..., np.newaxis]
         x_test = x_test[..., np.newaxis]
-        model = build_cnn_model(**model_params)
+        model = build_cnn_model(num_classes=num_classes, **model_params)
         display_image = x_train[0].squeeze()
     elif model_type == "mlp":
-        model = build_mlp_model(**model_params)
+        model = build_mlp_model(num_classes=num_classes, **model_params)
         display_image = x_train[0]
     elif model_type == "svm":
         model = build_svm_model(**model_params)
@@ -58,8 +65,29 @@ def compile_model(model, optimizer="adam"):
     return model
 
 
+def evaluate_model(model, model_type, x_test, y_test):
+    """Calculates classification report on test data."""
+    # Normalize and reshape test data as needed
+    x_test_proc = processor.normalize(x_test)
+    
+    if model_type == "cnn":
+        if len(x_test_proc.shape) == 3:
+            x_test_proc = x_test_proc[..., np.newaxis]
+        y_pred_probs = model.predict(x_test_proc, verbose=0)
+        y_pred = np.argmax(y_pred_probs, axis=1)
+    elif model_type == "mlp":
+        y_pred_probs = model.predict(x_test_proc, verbose=0)
+        y_pred = np.argmax(y_pred_probs, axis=1)
+    elif model_type == "svm":
+        x_test_proc = x_test_proc.reshape(x_test_proc.shape[0], -1)
+        y_pred = model.predict(x_test_proc)
+    
+    return classification_report(y_test, y_pred, output_dict=True)
+
+
 def train_model(
     model_type="cnn",
+    source="mnist",
     epochs=5,
     optimizer="adam",
     batch_size=32,
@@ -68,7 +96,7 @@ def train_model(
     **model_params,
 ):
     (x_train, y_train), (x_test, y_test), model, display_image = prepare_data_and_model(
-        model_type, **model_params
+        model_type, source=source, **model_params
     )
 
     start_time = time.time()
@@ -94,6 +122,7 @@ def train_model(
         test_acc = model.score(x_test_flat, y_test)
         test_loss = 0.0  # SVM doesn't provide a direct equivalent to Keras loss here
         history = None
+        y_pred = model.predict(x_test_flat)
     else:
         compile_model(model, optimizer=optimizer)
         history = model.fit(
@@ -105,11 +134,15 @@ def train_model(
             verbose=verbose,
         )
         test_loss, test_acc = model.evaluate(x_test, y_test, verbose=verbose)
+        y_pred_probs = model.predict(x_test, verbose=0)
+        y_pred = np.argmax(y_pred_probs, axis=1)
     
     end_time = time.time()
     training_duration = end_time - start_time
+
+    report = classification_report(y_test, y_pred, output_dict=True)
         
-    return model, display_image, test_loss, test_acc, history, training_duration
+    return model, display_image, test_loss, test_acc, history, training_duration, report
 
 
 def save_model(model, output_path):
@@ -179,6 +212,20 @@ def preprocess_image(image_path, model_type="cnn"):
     return preprocess_image_array(image, model_type=model_type)
 
 
+def _get_mapping_from_model(model):
+    """Infers the label mapping based on the model's output layer size."""
+    if hasattr(model, "output_shape"):
+        num_classes = model.output_shape[-1]
+    elif hasattr(model, "classes_"): # SVM case
+        num_classes = len(model.classes_)
+    else:
+        # Default fallback
+        return [str(i) for i in range(10)]
+    
+    source = "mnist" if num_classes == 10 else "emnist"
+    return get_label_mapping(source)
+
+
 def predict_image(model, image_path, model_type="cnn"):
     image_batch, preview_image, is_multi_digit = preprocess_image(
         image_path, model_type
@@ -189,8 +236,11 @@ def predict_image(model, image_path, model_type="cnn"):
     else:
         prediction = model.predict(image_batch, verbose=0)
         
-    predicted_labels = np.argmax(prediction, axis=1).astype(int).tolist()
+    indices = np.argmax(prediction, axis=1).astype(int).tolist()
     confidences = np.max(prediction, axis=1).astype(float).tolist()
+    
+    mapping = _get_mapping_from_model(model)
+    predicted_labels = [mapping[idx] for idx in indices]
 
     if is_multi_digit:
         combined_label = "".join(str(label) for label in predicted_labels)
@@ -209,8 +259,11 @@ def predict_image_array(model, image_array, model_type="cnn"):
     else:
         prediction = model.predict(image_batch, verbose=0)
         
-    predicted_labels = np.argmax(prediction, axis=1).astype(int).tolist()
+    indices = np.argmax(prediction, axis=1).astype(int).tolist()
     confidences = np.max(prediction, axis=1).astype(float).tolist()
+    
+    mapping = _get_mapping_from_model(model)
+    predicted_labels = [mapping[idx] for idx in indices]
 
     if is_multi_digit:
         combined_label = "".join(str(label) for label in predicted_labels)

@@ -12,8 +12,10 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from data.mnist import load_mnist
+from data.emnist import get_label_mapping
 from main import (
+    data_loader,
+    evaluate_model,
     load_trained_model,
     predict_image_array,
     save_model,
@@ -21,9 +23,9 @@ from main import (
 )
 
 
-st.set_page_config(page_title="MNIST Digit Classifier", layout="wide")
-st.title("MNIST Handwritten Digit Classifier")
-st.caption("Train model, upload digit image, inspect prediction confidence.")
+st.set_page_config(page_title="Handwritten Character Classifier", layout="wide")
+st.title("Handwritten Digit & Letter Classifier")
+st.caption("Train model, upload image, and inspect prediction confidence.")
 
 
 def get_model_type_label(model_type):
@@ -54,25 +56,50 @@ def show_history(history):
     plt.close(fig)
 
 
-def show_probability_chart(probabilities):
-    fig, ax = plt.subplots(figsize=(8, 4))
-    digits = np.arange(10)
-    ax.bar(digits, probabilities)
-    ax.set_xticks(digits)
+def show_probability_chart(probabilities, source="mnist"):
+    mapping = get_label_mapping(source)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    x = np.arange(len(probabilities))
+    ax.bar(x, probabilities)
+    ax.set_xticks(x)
+    ax.set_xticklabels(mapping, rotation=45 if len(mapping) > 10 else 0)
     ax.set_ylim(0, 1)
-    ax.set_xlabel("Digit")
+    ax.set_xlabel("Character")
     ax.set_ylabel("Probability")
     ax.set_title("Prediction Confidence")
     st.pyplot(fig)
     plt.close(fig)
 
 
-def show_uploaded_prediction(predicted_label, confidence, processed_image, probabilities):
+def show_classification_report(report, source="mnist"):
+    if not report:
+        return
+    
+    st.write("### Per-class Metrics (Test Set)")
+    
+    mapping = get_label_mapping(source)
+    table_data = []
+    for i, label in enumerate(mapping):
+        str_idx = str(i)
+        if str_idx in report:
+            metrics = report[str_idx]
+            table_data.append({
+                "Character": label,
+                "Precision": f"{metrics['precision']:.4f}",
+                "Recall": f"{metrics['recall']:.4f}",
+                "F1-Score": f"{metrics['f1-score']:.4f}",
+                "Support": int(metrics['support'])
+            })
+            
+    st.table(table_data)
+
+
+def show_uploaded_prediction(predicted_label, confidence, processed_image, probabilities, source="mnist"):
     preview_col, result_col = st.columns([1, 1.2])
 
     with preview_col:
         if isinstance(processed_image, list):
-            st.write("Processed Digits")
+            st.write("Processed Characters")
             preview_columns = st.columns(len(processed_image))
             for index, (column, digit_image) in enumerate(
                 zip(preview_columns, processed_image),
@@ -80,14 +107,14 @@ def show_uploaded_prediction(predicted_label, confidence, processed_image, proba
             ):
                 column.image(
                     digit_image,
-                    caption=f"Digit {index}",
+                    caption=f"Char {index}",
                     use_container_width=True,
                     clamp=True,
                 )
         else:
             st.image(
                 processed_image,
-                caption="Processed 28x28 Input",
+                caption="Processed Image",
                 width=220,
                 clamp=True,
             )
@@ -96,29 +123,39 @@ def show_uploaded_prediction(predicted_label, confidence, processed_image, proba
         st.write(f"Predicted Label: `{predicted_label}`")
         if isinstance(confidence, list):
             st.write(
-                "Per-digit confidence: "
+                "Per-character confidence: "
                 + ", ".join(f"`{value:.4f}`" for value in confidence)
             )
-            for index, digit_probabilities in enumerate(probabilities, start=1):
-                st.caption(f"Digit {index} probabilities")
-                show_probability_chart(digit_probabilities)
+            for index, char_probabilities in enumerate(probabilities, start=1):
+                st.caption(f"Character {index} probabilities")
+                show_probability_chart(char_probabilities, source=source)
         else:
             st.write(f"Confidence: `{confidence:.4f}`")
-            show_probability_chart(probabilities)
+            show_probability_chart(probabilities, source=source)
 
 
 def ensure_state():
     st.session_state.setdefault("model", None)
     st.session_state.setdefault("model_type", "cnn")
+    st.session_state.setdefault("source", "mnist")
     st.session_state.setdefault("history", None)
     st.session_state.setdefault("metrics", None)
 
 
 ensure_state()
 
-(x_train, y_train), (x_test, y_test) = load_mnist()
-
 with st.sidebar:
+    st.header("Settings")
+    source = st.selectbox(
+        "Dataset",
+        options=["mnist", "emnist"],
+        format_func=lambda x: "Digits (MNIST)" if x == "mnist" else "Digits & Letters (EMNIST)",
+        index=0 if st.session_state["source"] == "mnist" else 1
+    )
+    st.session_state["source"] = source
+    
+    (x_train, y_train), (x_test, y_test) = data_loader(source)
+
     st.header("Training Controls")
     model_type = st.selectbox(
         "Model Type",
@@ -165,17 +202,18 @@ with st.sidebar:
     default_ext = ".joblib" if model_type == "svm" else ".keras"
     model_save_path = st.text_input(
         "Save Model Path", 
-        value=f"trained_models/{model_type}_digit_model{default_ext}"
+        value=f"trained_models/{model_type}_{source}_model{default_ext}"
     )
     model_load_path = st.text_input(
         "Load Model Path", 
-        value=f"trained_models/{model_type}_digit_model{default_ext}"
+        value=f"trained_models/{model_type}_{source}_model{default_ext}"
     )
 
     if st.button("Train Model", use_container_width=True):
-        with st.spinner("Training model..."):
-            model, _, test_loss, test_acc, history, duration = train_model(
+        with st.spinner(f"Training model on {source}..."):
+            model, _, test_loss, test_acc, history, duration, report = train_model(
                 model_type=model_type,
+                source=source,
                 epochs=epochs,
                 optimizer=optimizer,
                 batch_size=batch_size,
@@ -194,6 +232,7 @@ with st.sidebar:
             "batch_size": batch_size,
             "optimizer": optimizer,
             "training_duration": float(duration),
+            "report": report,
         }
         st.success("Training complete.")
 
@@ -207,14 +246,26 @@ with st.sidebar:
     if st.button("Load Saved Model", use_container_width=True):
         try:
             loaded_model = load_trained_model(model_load_path)
+            with st.spinner("Evaluating loaded model..."):
+                report = evaluate_model(loaded_model, model_type, x_test, y_test)
+                # Accuracy is in the report
+                test_acc = report["accuracy"]
         except Exception as error:
             st.error(f"Load failed: {error}")
         else:
             st.session_state["model"] = loaded_model
             st.session_state["model_type"] = model_type
             st.session_state["history"] = None
-            st.session_state["metrics"] = None
-            st.success("Model loaded.")
+            st.session_state["metrics"] = {
+                "test_accuracy": float(test_acc),
+                "test_loss": 0.0,
+                "epochs": "N/A",
+                "batch_size": "N/A",
+                "optimizer": "N/A",
+                "training_duration": 0.0,
+                "report": report,
+            }
+            st.success("Model loaded and evaluated.")
 
 left_col, right_col = st.columns([1.2, 1])
 
@@ -234,19 +285,18 @@ with left_col:
             st.write(
                 f"Optimizer: `{metrics['optimizer']}` | Epochs: `{metrics['epochs']}`"
             )
+            show_classification_report(metrics.get("report"), source=st.session_state["source"])
         else:
             st.caption("Loaded model. Training metrics unavailable.")
 
-    history = st.session_state["history"]
-    # if history is not None:
-    #     st.subheader("Training Curves")
-    #     show_history(history)
-
 with right_col:
-    st.subheader("MNIST Sample Test")
+    st.subheader(f"{source.upper()} Sample Test")
     sample_index = st.slider("Test Sample Index", 0, len(x_test) - 1, 0)
     sample_image = x_test[sample_index]
-    actual_label = int(y_test[sample_index])
+    
+    mapping = get_label_mapping(source)
+    actual_label = mapping[int(y_test[sample_index])]
+    
     st.image(sample_image, caption=f"Actual Label: {actual_label}", width=220, clamp=True)
 
     if st.button("Predict Selected Test Sample"):
@@ -257,14 +307,14 @@ with right_col:
                 st.session_state["model"],
                 sample_image,
                 model_type=st.session_state["model_type"],
-)
+            )
             st.write(f"Predicted Label: `{predicted_label}`")
             st.write(f"Confidence: `{confidence:.4f}`")
-            show_probability_chart(probabilities)
+            show_probability_chart(probabilities, source=st.session_state["source"])
 
 st.subheader("Upload Your Image")
 uploaded_file = st.file_uploader(
-    "Upload digit image",
+    "Upload handwritten image",
     type=["png", "jpg", "jpeg", "bmp"],
 )
 
@@ -275,12 +325,12 @@ if uploaded_file is not None:
     # Display columns for original and thresholded view
     input_col, threshold_col = st.columns(2)
     with input_col:
-        st.image(uploaded_array, caption="Uploaded Image (Grayscale)", width=220, clamp=True)
+        st.image(uploaded_array, caption="Uploaded Image", width=220, clamp=True)
     
     with threshold_col:
         from image_processing.processor import threshold_image
         binary_view = threshold_image(uploaded_array)
-        st.image(binary_view, caption="Segmentation Mask (Binary)", width=220, clamp=True)
+        #st.image(binary_view, caption="Processed image", width=220, clamp=True)
 
     if st.session_state["model"] is None:
         st.warning("Train or load model first.")
@@ -295,4 +345,5 @@ if uploaded_file is not None:
             confidence,
             processed_image,
             probabilities,
+            source=st.session_state["source"]
         )

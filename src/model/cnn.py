@@ -1,7 +1,7 @@
 from tensorflow.keras import layers, models
 
 
-def build_cnn_model(conv1_filters=32, conv2_filters=64, dense_units=128):
+def build_cnn_model(conv1_filters=32, conv2_filters=64, dense_units=128, num_classes=10):
     return models.Sequential(
         [
             layers.Input(shape=(28, 28, 1)),
@@ -11,6 +11,6 @@ def build_cnn_model(conv1_filters=32, conv2_filters=64, dense_units=128):
             layers.MaxPooling2D((2, 2)),
             layers.Flatten(),
             layers.Dense(dense_units, activation="relu"),
-            layers.Dense(10, activation="softmax"),
+            layers.Dense(num_classes, activation="softmax"),
         ]
     )
